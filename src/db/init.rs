@@ -38,8 +38,100 @@ pub async fn init_database(pool: &PgPool) -> Result<(), sqlx::Error> {
         r#"
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
+            username VARCHAR(255) UNIQUE NOT NULL,
             email VARCHAR(255) UNIQUE NOT NULL,
             password_hash VARCHAR(255) NOT NULL,
+            is_admin BOOLEAN DEFAULT false,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        "#
+    )
+    .execute(pool)
+    .await?;
+
+    // Create personal_data table
+    sqlx::query!(
+        r#"
+        CREATE TABLE IF NOT EXISTS personal_data (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            email VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id)
+        )
+        "#
+    )
+    .execute(pool)
+    .await?;
+
+    // Create api_keys table
+    sqlx::query!(
+        r#"
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            name VARCHAR(255) NOT NULL,
+            key_hash VARCHAR(255) NOT NULL,
+            exchange VARCHAR(50) NOT NULL,
+            permissions JSONB NOT NULL,
+            is_active BOOLEAN DEFAULT true,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, name)
+        )
+        "#
+    )
+    .execute(pool)
+    .await?;
+
+    // Create user_encryption_keys table
+    sqlx::query!(
+        r#"
+        CREATE TABLE IF NOT EXISTS user_encryption_keys (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            key_hash BYTEA NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id)
+        )
+        "#
+    )
+    .execute(pool)
+    .await?;
+
+    // Create notification_preferences table
+    sqlx::query!(
+        r#"
+        CREATE TABLE IF NOT EXISTS notification_preferences (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            email_enabled BOOLEAN DEFAULT true,
+            telegram_enabled BOOLEAN DEFAULT true,
+            whatsapp_enabled BOOLEAN DEFAULT false,
+            price_alerts_enabled BOOLEAN DEFAULT true,
+            system_alerts_enabled BOOLEAN DEFAULT true,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id)
+        )
+        "#
+    )
+    .execute(pool)
+    .await?;
+
+    // Create webhooks table
+    sqlx::query!(
+        r#"
+        CREATE TABLE IF NOT EXISTS webhooks (
+            id UUID PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            url TEXT NOT NULL,
+            secret TEXT NOT NULL,
+            notification_types JSONB NOT NULL,
+            enabled BOOLEAN DEFAULT true,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         )
@@ -60,16 +152,6 @@ pub async fn init_database(pool: &PgPool) -> Result<(), sqlx::Error> {
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         )
-        "#
-    )
-    .execute(pool)
-    .await?;
-
-    // Eliminar la restricción única si existe
-    sqlx::query!(
-        r#"
-        ALTER TABLE asset_pairs
-        DROP CONSTRAINT IF EXISTS asset_pairs_user_id_base_asset_quote_asset_key
         "#
     )
     .execute(pool)

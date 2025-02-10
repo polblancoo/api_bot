@@ -7,6 +7,7 @@ use sqlx::types::BigDecimal;
 pub struct AssetPair {
     pub id: i32,
     pub user_id: i32,
+    pub exchange: String,
     pub base_asset: String,
     pub quote_asset: String,
     #[serde(with = "bigdecimal_string")]
@@ -17,6 +18,7 @@ pub struct AssetPair {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateAssetPairRequest {
+    pub exchange: String,
     pub base_asset: String,
     pub quote_asset: String,
     #[serde(with = "bigdecimal_string")]

@@ -1,90 +1,94 @@
+use crate::models::users::CreateUserRequest;
+use bcrypt::{hash, verify, DEFAULT_COST};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use tracing::info;
-use crate::models::users::{User, DbUser, CreateUserRequest};
-use sqlx::types::chrono::{DateTime, Utc};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct User {
+    pub id: i32,
+    pub username: String,
+    pub email: String,
+    pub password_hash: String,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
 
 pub async fn create_user(
     pool: &PgPool,
-    user: &CreateUserRequest,
-    password_hash: String,
-) -> Result<DbUser, sqlx::Error> {
+    req: &CreateUserRequest,
+) -> Result<User, sqlx::Error> {
+    let now = Utc::now();
+    let password_hash = hash(req.password.as_bytes(), DEFAULT_COST).unwrap();
+
     sqlx::query_as!(
-        DbUser,
+        User,
         r#"
-        INSERT INTO users (username, password_hash, telegram_id, created_at, is_active, is_admin)
-        VALUES ($1, $2, $3, NOW(), true, $4)
-        RETURNING id, username, password_hash, telegram_id, created_at, is_active, last_login, is_admin
+        INSERT INTO users (username, email, password_hash, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, username, email, password_hash, created_at, updated_at
         "#,
-        user.username,
+        req.username,
+        req.email,
         password_hash,
-        user.telegram_id,
-        user.is_admin.unwrap_or(false)
+        now as _,
+        now as _,
     )
     .fetch_one(pool)
     .await
 }
 
-pub async fn get_by_username(pool: &PgPool, username: &str) -> Result<DbUser, sqlx::Error> {
+pub async fn get_by_username(
+    pool: &PgPool,
+    username: &str,
+) -> Result<Option<User>, sqlx::Error> {
     sqlx::query_as!(
-        DbUser,
+        User,
         r#"
-        SELECT id, username, password_hash, telegram_id, created_at, is_active, last_login, is_admin
+        SELECT id, username, email, password_hash, created_at, updated_at
         FROM users
         WHERE username = $1
         "#,
         username
     )
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await
 }
 
-pub async fn update_last_login(
-    pool: &PgPool,
-    user_id: i32,
-    last_login: DateTime<Utc>,
-) -> Result<DbUser, sqlx::Error> {
+pub async fn get_user(pool: &PgPool, user_id: i32) -> Result<Option<User>, sqlx::Error> {
     sqlx::query_as!(
-        DbUser,
+        User,
         r#"
-        UPDATE users
-        SET last_login = $1
-        WHERE id = $2
-        RETURNING id, username, password_hash, telegram_id, created_at, is_active, last_login, is_admin
-        "#,
-        last_login,
-        user_id
-    )
-    .fetch_one(pool)
-    .await
-}
-
-pub async fn deactivate_user(
-    pool: &PgPool,
-    user_id: i32,
-) -> Result<DbUser, sqlx::Error> {
-    sqlx::query_as!(
-        DbUser,
-        r#"
-        UPDATE users
-        SET is_active = false
+        SELECT id, username, email, password_hash, created_at, updated_at
+        FROM users 
         WHERE id = $1
-        RETURNING id, username, password_hash, telegram_id, created_at, is_active, last_login, is_admin
         "#,
         user_id
     )
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await
 }
 
-pub async fn get_all_users(pool: &PgPool) -> Result<Vec<DbUser>, sqlx::Error> {
-    sqlx::query_as!(
-        DbUser,
-        r#"
-        SELECT id, username, password_hash, telegram_id, created_at, is_active, last_login, is_admin
-        FROM users
-        ORDER BY id
-        "#
-    )
-    .fetch_all(pool)
-    .await
+pub async fn authenticate_user(
+    pool: &PgPool,
+    username: &str,
+    password: &str,
+) -> Result<User, sqlx::Error> {
+    let user = get_by_username(pool, username).await?;
+
+    if let Some(user) = user {
+        if verify(password.as_bytes(), &user.password_hash).unwrap_or(false) {
+            Ok(user)
+        } else {
+            Err(sqlx::Error::RowNotFound)
+        }
+    } else {
+        Err(sqlx::Error::RowNotFound)
+    }
 }

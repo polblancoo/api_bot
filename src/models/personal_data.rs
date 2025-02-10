@@ -15,3 +15,8 @@ pub struct PersonalData {
 pub struct CreatePersonalDataRequest {
     pub email: String,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdatePersonalDataRequest {
+    pub email: String,
+}

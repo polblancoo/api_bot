@@ -3,10 +3,9 @@ use tracing::{info, error};
 
 pub mod init;
 pub mod users;
-pub mod asset_pairs;
-pub mod api_credentials;
 pub mod personal_data;
-pub mod price_alerts;
+pub mod api_keys;
+pub mod notifications;
 
 pub async fn init_pool(database_url: &str) -> Result<Pool<Postgres>, sqlx::Error> {
     info!("Intentando conectar a la base de datos: {}", database_url);
@@ -22,20 +21,16 @@ pub async fn init_pool(database_url: &str) -> Result<Pool<Postgres>, sqlx::Error
     // Verificar que el archivo existe
     let migration_path = std::path::Path::new("migrations/20240320_initial_schema.sql");
     if migration_path.exists() {
-        info!("Archivo de migración encontrado");
+        info!("Archivo de migración encontrado: {}", migration_path.display());
+        
+        // Leer el contenido del archivo
+        let sql = std::fs::read_to_string(migration_path)?;
+        
+        // Ejecutar el SQL
+        sqlx::query(&sql).execute(&pool).await?;
+        info!("Migraciones ejecutadas exitosamente");
     } else {
-        error!("¡Archivo de migración no encontrado!");
-        return Err(sqlx::Error::Configuration(
-            "Archivo de migración no encontrado".into()
-        ));
-    }
-
-    match sqlx::migrate!("./migrations").run(&pool).await {
-        Ok(_) => info!("Migraciones completadas exitosamente"),
-        Err(e) => {
-            error!("Error al ejecutar migraciones: {}", e);
-            return Err(e.into());
-        }
+        error!("No se encontró el archivo de migración: {}", migration_path.display());
     }
 
     Ok(pool)

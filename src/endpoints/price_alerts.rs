@@ -7,122 +7,122 @@ use serde_json::json;
 
 use crate::{
     auth::jwt::Claims,
-    db::price_alerts::{
-        create_price_alert as db_create_price_alert,
-        get_price_alert as db_get_price_alert,
-        list_price_alerts as db_list_price_alerts,
-        update_price_alert as db_update_price_alert,
-        delete_price_alert as db_delete_price_alert,
-    },
+    models::price_alerts::{PriceAlert, CreatePriceAlertRequest},
     endpoints::AppState,
-    models::price_alerts::CreatePriceAlertRequest,
+    models::ApiResponse,
+    notifications::webhook,
+    db::price_alerts,
+    utils::serde::serialize_bigdecimal,
 };
 
 pub async fn create_price_alert(
-    State(state): State<AppState>,
     claims: Claims,
-    Json(req): Json<CreatePriceAlertRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    match db_create_price_alert(&state.pool, claims.user_id, &req).await {
-        Ok(price_alert) => Ok(Json(json!({
-            "status": "success",
-            "message": "Price alert created successfully",
-            "data": price_alert
-        }))),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Error creating price alert: {}", e),
-        )),
-    }
+    State(state): State<AppState>,
+    Json(request): Json<CreatePriceAlertRequest>,
+) -> Result<Json<ApiResponse<PriceAlert>>, (StatusCode, String)> {
+    let alert = price_alerts::create_price_alert(&state.pool, claims.user_id, &request)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error creating price alert: {}", e),
+            )
+        })?;
+
+    // Enviar notificación a través de webhooks
+    let notification_data = json!({
+        "alert_id": alert.id,
+        "target_price": serialize_bigdecimal(&alert.target_price, serde_json::value::Serializer).unwrap(),
+        "condition": alert.condition,
+    });
+
+    // No esperamos a que se envíen los webhooks para responder
+    tokio::spawn(async move {
+        if let Err(e) = webhook::send_event_to_webhooks(&state.pool, "price_alert.created", notification_data).await {
+            eprintln!("Error sending webhooks: {:?}", e);
+        }
+    });
+
+    Ok(Json(ApiResponse::success(alert)))
 }
 
 pub async fn get_price_alerts(
-    State(state): State<AppState>,
     claims: Claims,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    match db_list_price_alerts(&state.pool, claims.user_id).await {
-        Ok(price_alerts) => Ok(Json(json!({
-            "status": "success",
-            "message": "Price alerts retrieved successfully",
-            "data": price_alerts
-        }))),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Error retrieving price alerts: {}", e),
-        )),
-    }
+    State(state): State<AppState>,
+) -> Result<Json<ApiResponse<Vec<PriceAlert>>>, (StatusCode, String)> {
+    let alerts = price_alerts::list_price_alerts(&state.pool, claims.user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error fetching price alerts: {}", e),
+            )
+        })?;
+
+    Ok(Json(ApiResponse::success(alerts)))
 }
 
 pub async fn get_price_alert(
-    State(state): State<AppState>,
     claims: Claims,
+    State(state): State<AppState>,
     Path(id): Path<i32>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    match db_get_price_alert(&state.pool, id).await {
-        Ok(price_alert) => {
-            if price_alert.user_id != claims.user_id {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    "Not authorized to access this price alert".to_string(),
-                ));
-            }
-            Ok(Json(json!({
-                "status": "success",
-                "message": "Price alert retrieved successfully",
-                "data": price_alert
-            })))
-        }
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Error retrieving price alert: {}", e),
-        )),
+) -> Result<Json<ApiResponse<PriceAlert>>, (StatusCode, String)> {
+    let alert = price_alerts::get_price_alert(&state.pool, id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error fetching price alert: {}", e),
+            )
+        })?
+        .ok_or((StatusCode::NOT_FOUND, "Price alert not found".to_string()))?;
+
+    if alert.user_id != claims.user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Not authorized to access this price alert".to_string(),
+        ));
     }
+
+    Ok(Json(ApiResponse::success(alert)))
 }
 
 pub async fn update_price_alert(
-    State(state): State<AppState>,
     claims: Claims,
+    State(state): State<AppState>,
     Path(id): Path<i32>,
-    Json(req): Json<CreatePriceAlertRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    match db_update_price_alert(&state.pool, id, claims.user_id, &req).await {
-        Ok(price_alert) => Ok(Json(json!({
-            "status": "success",
-            "message": "Price alert updated successfully",
-            "data": price_alert
-        }))),
-        Err(e) => {
-            if e.to_string().contains("not found") {
-                Err((StatusCode::NOT_FOUND, "Price alert not found".to_string()))
-            } else {
-                Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Error updating price alert: {}", e),
-                ))
-            }
-        }
-    }
+    Json(request): Json<CreatePriceAlertRequest>,
+) -> Result<Json<ApiResponse<PriceAlert>>, (StatusCode, String)> {
+    let alert = price_alerts::update_price_alert(&state.pool, id, claims.user_id, &request)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error updating price alert: {}", e),
+            )
+        })?
+        .ok_or((StatusCode::NOT_FOUND, "Price alert not found".to_string()))?;
+
+    Ok(Json(ApiResponse::success(alert)))
 }
 
 pub async fn delete_price_alert(
-    State(state): State<AppState>,
     claims: Claims,
+    State(state): State<AppState>,
     Path(id): Path<i32>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    match db_delete_price_alert(&state.pool, id, claims.user_id).await {
-        Ok(_) => Ok(Json(json!({
-            "status": "success",
-            "message": "Price alert deleted successfully",
-        }))),
-        Err(e) => {
-            if e.to_string().contains("not found") {
-                Err((StatusCode::NOT_FOUND, "Price alert not found".to_string()))
-            } else {
-                Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Error deleting price alert: {}", e),
-                ))
-            }
-        }
+) -> Result<Json<ApiResponse<()>>, (StatusCode, String)> {
+    let deleted = price_alerts::delete_price_alert(&state.pool, id, claims.user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error deleting price alert: {}", e),
+            )
+        })?;
+
+    if !deleted {
+        return Err((StatusCode::NOT_FOUND, "Price alert not found".to_string()));
     }
+
+    Ok(Json(ApiResponse::success(())))
 }

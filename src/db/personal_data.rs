@@ -1,11 +1,21 @@
-use sqlx::PgPool;
+use crate::models::personal_data::UpdatePersonalDataRequest;
 use chrono::{DateTime, Utc};
-use crate::models::personal_data::{PersonalData, CreatePersonalDataRequest};
+use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PersonalData {
+    pub id: i32,
+    pub user_id: i32,
+    pub email: String,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
 
 pub async fn create_personal_data(
     pool: &PgPool,
     user_id: i32,
-    req: &CreatePersonalDataRequest,
+    email: &str,
 ) -> Result<PersonalData, sqlx::Error> {
     let now = Utc::now();
 
@@ -14,30 +24,21 @@ pub async fn create_personal_data(
         r#"
         INSERT INTO personal_data (user_id, email, created_at, updated_at)
         VALUES ($1, $2, $3, $4)
-        RETURNING *
+        RETURNING id, user_id, email, created_at, updated_at
         "#,
         user_id,
-        req.email,
-        now,
-        now
+        email,
+        now as _,
+        now as _,
     )
     .fetch_one(pool)
     .await
 }
 
-pub async fn get_by_id(pool: &PgPool, id: i32) -> Result<PersonalData, sqlx::Error> {
-    sqlx::query_as!(
-        PersonalData,
-        r#"
-        SELECT * FROM personal_data WHERE id = $1
-        "#,
-        id
-    )
-    .fetch_one(pool)
-    .await
-}
-
-pub async fn get_by_user_id(pool: &PgPool, user_id: i32) -> Result<PersonalData, sqlx::Error> {
+pub async fn get_personal_data(
+    pool: &PgPool,
+    user_id: i32,
+) -> Result<Option<PersonalData>, sqlx::Error> {
     sqlx::query_as!(
         PersonalData,
         r#"
@@ -46,15 +47,14 @@ pub async fn get_by_user_id(pool: &PgPool, user_id: i32) -> Result<PersonalData,
         "#,
         user_id
     )
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await
 }
 
 pub async fn update_personal_data(
     pool: &PgPool,
-    id: i32,
     user_id: i32,
-    email: String,
+    req: &UpdatePersonalDataRequest,
 ) -> Result<PersonalData, sqlx::Error> {
     let now = Utc::now();
 
@@ -63,12 +63,11 @@ pub async fn update_personal_data(
         r#"
         UPDATE personal_data
         SET email = $1, updated_at = $2
-        WHERE id = $3 AND user_id = $4
-        RETURNING *
+        WHERE user_id = $3
+        RETURNING id, user_id, email, created_at, updated_at
         "#,
-        email,
-        now,
-        id,
+        req.email,
+        now as _,
         user_id
     )
     .fetch_one(pool)
